@@ -8,11 +8,11 @@ from pptx import Presentation
 
 # --- Konfiguratsiya va API Kalitlari ---
 # *Almashtiring: Oʻz Telegram bot tokeningizni joylang*
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+BOT_TOKEN = "8579631704:AAHxcJpfN0sFC4C8N8GJHPWpLXsMe3dQ0qQ"
 # *Almashtiring: Oʻz Gemini API kalitingizni joylang*
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY_HERE")
+GEMINI_API_KEY = "AIzaSyBHRBDjtqHGlbb7XSbYkpXEs0clOkxeTgs"
 
-ADMIN_USER_ID = YOUR_ADMIN_TELEGRAM_ID  # *Almashtiring: Sizning Telegram ID raqamingiz*
+ADMIN_USER_ID = 8005357331  # *Almashtiring: Sizning Telegram ID raqamingiz*
 
 # Gemini API ni ishga tushirish
 if GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE":
