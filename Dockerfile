@@ -13,6 +13,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Asosiy kod faylini nusxalash
 COPY main.py .
 
-# PORT sozlamasini olib tashlaymiz, chunki polling ishlatilgan.
 # Botni ishga tushirish buyrug'i
 CMD ["python", "main.py"]
