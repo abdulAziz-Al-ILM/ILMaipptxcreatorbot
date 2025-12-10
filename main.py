@@ -4,7 +4,8 @@ import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from pptx import Presentation
-from pptx.text.text import _Run, _Paragraph # XML obyektlarini tozalash uchun kerak
+# XML obyektlarini tozalash uchun kerak, bu toza joylashni ta'minlaydi
+from pptx.text.text import _Run, _Paragraph 
 
 # --- Konfiguratsiya va Global Sozlamalar ---
 # **MUHIM: ALMASHTIRING** Oʻz Telegram bot tokeningizni joylang
@@ -16,11 +17,17 @@ ADMIN_USER_ID = 8005357331
 user_states = {} 
 user_data = {}  
 
-# --- PPTX Matnini Almashtirish Funksiyasi (Toza va Barqaror Versiya) ---
+# --- PPTX Matnini Almashtirish Funksiyasi (Professional Heuristika qo'shildi) ---
+
+# Dekortiv shakllarni o'tkazib yuborish uchun minimal o'lcham (EMU - English Metric Units)
+# Taxminan 1.5 sm dan kichik shakllarni o'tkazib yuborish
+MIN_WIDTH_EMU = 500000 
+MIN_HEIGHT_EMU = 500000 
 
 def replace_text_in_slides(prs, new_texts_list):
     """
-    Taqdimotdagi har bir matn qutisini (paragrafni) navbatdagi matn qismi bilan toza almashtiradi.
+    Taqdimotdagi faqat asosiy kontent uchun mo'ljallangan matn qutilarini toza almashtiradi.
+    Dekorativ shakllarni o'tkazib yuboradi.
     """
     text_index = 0
     
@@ -29,6 +36,33 @@ def replace_text_in_slides(prs, new_texts_list):
             if shape.has_text_frame:
                 text_frame = shape.text_frame
                 
+                # --- HEURISTIKA FILTRLARI ---
+                
+                # 1. Kichik shakllarni o'tkazib yuborish (Ehtimol, stiker, raqamlar, ikonlar)
+                try:
+                    if shape.width < MIN_WIDTH_EMU or shape.height < MIN_HEIGHT_EMU:
+                        continue 
+                except AttributeError:
+                    # Agar shakl o'lchamiga ega bo'lmasa (masalan, guruh ichidagi matn qutisi) o'tkazib yuboriladi
+                    pass
+
+                # 2. Ichidagi matnni tekshirish (Dekorativ shablon matnlarini o'tkazib yuborish)
+                if text_frame.has_text:
+                    first_paragraph_text = text_frame.paragraphs[0].text.strip()
+                    
+                    # 2a. Kichik sonli matnlarni o'tkazib yuborish (Masalan, slayd raqamlari "01", "02")
+                    if len(first_paragraph_text) < 4 and first_paragraph_text.isdigit():
+                        continue
+                    
+                    # 2b. Odatdagi shablonli ko'rsatmalarni o'tkazib yuborish
+                    # Sizning PPTX da aniqlangan kirish matnlaridan foydalanildi
+                    if any(phrase.lower() in first_paragraph_text.lower() for phrase in [
+                        'please enter the title', 'title text addition', 'image', '01', '02', '03', '04', 'thank you'
+                    ]):
+                        continue
+                
+                # --- TOZA MATN JOYLASHTIRISH LOGIKASI ---
+
                 # Har bir paragrafni almashtirish
                 for paragraph in text_frame.paragraphs:
                     if text_index < len(new_texts_list):
@@ -36,12 +70,12 @@ def replace_text_in_slides(prs, new_texts_list):
                         new_content = new_texts_list[text_index].strip()
                         
                         # 1. Paragrafni XML darajasida tozalash: barcha eski formatlash (runs) o'chiriladi
+                        # Bu matnni toza, lekin shablonning asosiy uslubiga mos holda joylashtirishni ta'minlaydi
                         p = paragraph._p
                         for run in paragraph.runs:
-                            # Run'ni paragraph XML obyektidan o'chirish
                             p.remove(run._r) 
                         
-                        # 2. Yangi run qo'shish va matnni joylash (toza va yangi format bilan)
+                        # 2. Yangi run qo'shish va matnni joylash
                         if new_content:
                             new_run = paragraph.add_run()
                             new_run.text = new_content
@@ -51,15 +85,13 @@ def replace_text_in_slides(prs, new_texts_list):
                     if text_index >= len(new_texts_list):
                         return 
 
-# --- Telegram Bot Handlerlari ---
+# --- Telegram Bot Handlerlari (o'zgarishsiz) ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start buyrug'ini qabul qiladi."""
     user_id = update.effective_user.id
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
 
-    # 1-yanvargacha boshqa foydalanuvchilar uchun cheklov
     if user_id != ADMIN_USER_ID:
         if today < target_date:
             await update.message.reply_text(
@@ -68,7 +100,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             return
 
-    # Admin va 1-yanvardan keyingi foydalanuvchilar uchun asosiy jarayon
     await update.message.reply_text(
         f"Salom! Ishni boshlash uchun:\n\n"
         f"1. Prezentatsiya **mavzusini** yozing."
@@ -77,7 +108,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_data[user_id] = {} 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Matn yoki fayllarni qabul qiladi va jarayonni boshqaradi."""
     user_id = update.effective_user.id
     state = user_states.get(user_id)
     
@@ -143,16 +173,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif state == 'awaiting_content' and update.message.text:
         await update.message.reply_text("Kontent qabul qilindi. Matnni PPTXga toza joylamoqdaman...")
         
-        # AI dan kelgan matnni tozalash
         raw_content = update.message.text
-        # Har bir qatorni alohida matn qismi deb hisoblaymiz
         new_texts = [text.strip() for text in raw_content.split('\n') if text.strip()]
 
         file_id = user_data[user_id]['file_id']
         file_name = user_data[user_id]['file_name']
         topic = user_data[user_id]['topic']
 
-        # Faylni qayta yuklash
         pptx_file = await context.bot.get_file(file_id)
         file_data = io.BytesIO()
         await pptx_file.download_to_memory(file_data)
@@ -171,7 +198,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_document(
                 document=output_buffer,
                 filename=f"To'ldirilgan_TOZA_{file_name}",
-                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}\n\nEslatma: Matn joylashda faqat mavjud matn qutilari to'ldirildi. Shrift va ranglar shabloningizdagi default holatda qoladi."
+                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}\n\nEslatma: Matn joylashda faqat asosiy matn qutilari to'ldirildi. Shrift va ranglar shabloningizdagi default tema holatiga qaytgan bo'lishi mumkin."
             )
         except Exception as e:
             await update.message.reply_text(f"Faylga matn joylashda kutilmagan xato yuz berdi: {e}")
@@ -182,7 +209,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             del user_data[user_id]
 
     else:
-        # Noto'g'ri turdagi xabar
         await update.message.reply_text("Noto'g'ri qadam yoki fayl turi mos kelmadi. Iltimos, /start buyrug'ini qaytadan bosing.")
 
 
@@ -197,4 +223,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-    
+        
