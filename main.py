@@ -15,7 +15,7 @@ GEMINI_API_KEY = "AIzaSyBHRBDjtqHGlbb7XSbYkpXEs0clOkxeTgs"
 ADMIN_USER_ID = 8005357331  # *Almashtiring: Sizning Telegram ID raqamingiz*
 
 # Gemini API ni ishga tushirish
-if GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE":
+if GEMINI_API_KEY != "AIzaSyBHRBDjtqHGlbb7XSbYkpXEs0clOkxeTgs":
     genai.configure(api_key=GEMINI_API_KEY)
     gemini_model = genai.GenerativeModel('gemini-2.5-flash')
 else:
