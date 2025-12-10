@@ -6,20 +6,21 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from pptx import Presentation
 
 # --- Konfiguratsiya va Global Sozlamalar ---
-# *Almashtiring: Oʻz Telegram bot tokeningizni joylang*
+# **MUHIM: ALMASHTIRING** Oʻz Telegram bot tokeningizni joylang
 BOT_TOKEN = "8579631704:AAHxcJpfN0sFC4C8N8GJHPWpLXsMe3dQ0qQ"
-ADMIN_USER_ID = 8005357331  # *Almashtiring: Sizning Telegram ID raqamingiz*
+# **MUHIM: ALMASHTIRING** Sizning Telegram ID raqamingiz (son)
+ADMIN_USER_ID = 8005357331  
 
 # --- Global Holatni Boshqarish ---
-# Foydalanuvchi holatini saqlash: None -> 'awaiting_topic' -> 'awaiting_pptx' -> 'awaiting_content'
-user_states = {} 
+user_states = {} # Foydalanuvchi holatini saqlash: awaiting_topic, awaiting_pptx, awaiting_content
 user_data = {}  # Foydalanuvchining mavzusi va fayl ma'lumotlarini saqlash
 
-# --- PPTX Matnini Almashtirish Funksiyasi ---
+# --- PPTX Matnini Almashtirish Funksiyasi (Xato Tuzatildi) ---
 
 def replace_text_in_slides(prs, new_texts_list):
     """
     Taqdimotdagi matn qutilaridagi matnni yangi matnlar bilan almashtiradi.
+    Matnni almashtirishning eng xavfsiz usuli qo'llanildi.
     """
     text_index = 0
     
@@ -27,16 +28,23 @@ def replace_text_in_slides(prs, new_texts_list):
         for shape in slide.shapes:
             if shape.has_text_frame:
                 text_frame = shape.text_frame
-                # Har bir paragrafdagi matnni almashtirish
+                
+                # Slayd ichidagi barcha paragraflarni aylanib chiqamiz
                 for paragraph in text_frame.paragraphs:
                     if text_index < len(new_texts_list):
-                        # Mavjud matnni tozalash
-                        while paragraph.runs:
-                            paragraph.runs.pop()
-
-                        # Yangi matnni qo'shish
-                        new_run = paragraph.add_run()
-                        new_run.text = new_texts_list[text_index].strip()
+                        
+                        # Faqat birinchi Run obyektining matnini almashtiramiz
+                        if paragraph.runs:
+                            # Mavjud barcha matnlarni tozalab, birinchi run'ga yangi matnni yozamiz
+                            paragraph.runs[0].text = new_texts_list[text_index].strip()
+                            # Qo'shimcha run larni o'chiramiz (agar mavjud bo'lsa)
+                            for i in range(len(paragraph.runs) - 1, 0, -1):
+                                paragraph._p.remove(paragraph.runs[i]._r)
+                        else:
+                            # Agar paragraf bo'sh bo'lsa, yangi run qo'shish
+                            new_run = paragraph.add_run()
+                            new_run.text = new_texts_list[text_index].strip()
+                        
                         text_index += 1
                     
                     if text_index >= len(new_texts_list):
@@ -45,33 +53,35 @@ def replace_text_in_slides(prs, new_texts_list):
 # --- Telegram Bot Handlerlari ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start buyrug'ini qabul qiladi va holatni boshlaydi."""
+    """/start buyrug'ini qabul qiladi."""
     user_id = update.effective_user.id
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
 
+    # 1-yanvargacha boshqa foydalanuvchilar uchun cheklov
     if user_id != ADMIN_USER_ID:
-        # Boshqa foydalanuvchilar uchun reklama
         if today < target_date:
             await update.message.reply_text(
                 f"Assalomu alaykum! 👋\n\n"
-                f"Men hali to'liq ishga tushmadim, ammo **2025 yil 1 yanvardan** boshlab WPS shablonlaringizni avtomatik to'ldiraman! Kutib qoling! 😉"
+                f"Men WPS Office shablonlarini avtomatik to'ldiruvchi botman. **2025 yil 1 yanvardan** to'liq ishga tushaman! Kutib qoling! 😉"
             )
             return
 
-    # Admin va 1-yanvardan keyingi foydalanuvchilar
+    # Admin va 1-yanvardan keyingi foydalanuvchilar uchun asosiy jarayon
     await update.message.reply_text(
         f"Salom! Ishni boshlash uchun:\n\n"
         f"1. Prezentatsiya **mavzusini** yozing."
     )
     user_states[user_id] = 'awaiting_topic'
+    # Oldingi ma'lumotlarni tozalash
+    user_data[user_id] = {} 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Matn yoki fayllarni qabul qiladi va jarayonni boshqaradi."""
     user_id = update.effective_user.id
     state = user_states.get(user_id)
     
-    # Reklama davrida admin bo'lmaganlarga xabar bermaslik (agar vaqt o'tmagan bo'lsa)
+    # Reklama davrida admin bo'lmaganlarga xabar bermaslik
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
     if user_id != ADMIN_USER_ID and today < target_date:
@@ -79,7 +89,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # 1. Mavzuni qabul qilish
     if state == 'awaiting_topic' and update.message.text:
-        user_data[user_id] = {'topic': update.message.text}
+        user_data[user_id]['topic'] = update.message.text
         user_states[user_id] = 'awaiting_pptx'
         await update.message.reply_text(
             f"A'lo! Mavzu: **{update.message.text}**.\n\n"
@@ -101,6 +111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         file_data = io.BytesIO()
         await pptx_file.download_to_memory(file_data)
         file_data.seek(0)
+        
         try:
             prs = Presentation(file_data)
             num_slides = len(prs.slides)
@@ -110,7 +121,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # Prompt yaratish (Foydalanuvchiga beriladigan ko'rsatma)
-        prompt_texts_count = num_slides * 2 # Har bir slayd uchun 2 matn qismi taxminan
+        # Slaydlar soni * 2 (Sarlavha va asosiy matn uchun)
+        prompt_texts_count = num_slides * 2 
         topic = user_data[user_id]['topic']
         
         prompt = (
@@ -137,6 +149,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # AI dan kelgan matnni tozalash
         raw_content = update.message.text
+        # Har bir qatorni alohida matn qismi deb hisoblaymiz
         new_texts = [text.strip() for text in raw_content.split('\n') if text.strip()]
 
         file_id = user_data[user_id]['file_id']
@@ -165,6 +178,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}"
             )
         except Exception as e:
+            # Xatolikni admin uchun ko'rsatish
             await update.message.reply_text(f"Faylga matn joylashda kutilmagan xato yuz berdi: {e}")
 
         # Jarayonni tugatish
@@ -188,4 +202,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-        
+    
