@@ -4,6 +4,7 @@ import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from pptx import Presentation
+from pptx.text.text import _Run, _Paragraph # XML obyektlarini tozalash uchun kerak
 
 # --- Konfiguratsiya va Global Sozlamalar ---
 # **MUHIM: ALMASHTIRING** Oʻz Telegram bot tokeningizni joylang
@@ -12,15 +13,14 @@ BOT_TOKEN = "8579631704:AAHxcJpfN0sFC4C8N8GJHPWpLXsMe3dQ0qQ"
 ADMIN_USER_ID = 8005357331  
 
 # --- Global Holatni Boshqarish ---
-user_states = {} # Foydalanuvchi holatini saqlash: awaiting_topic, awaiting_pptx, awaiting_content
-user_data = {}  # Foydalanuvchining mavzusi va fayl ma'lumotlarini saqlash
+user_states = {} 
+user_data = {}  
 
-# --- PPTX Matnini Almashtirish Funksiyasi (Xato Tuzatildi) ---
+# --- PPTX Matnini Almashtirish Funksiyasi (Toza va Barqaror Versiya) ---
 
 def replace_text_in_slides(prs, new_texts_list):
     """
-    Taqdimotdagi matn qutilaridagi matnni yangi matnlar bilan almashtiradi.
-    Matnni almashtirishning eng xavfsiz usuli qo'llanildi.
+    Taqdimotdagi har bir matn qutisini (paragrafni) navbatdagi matn qismi bilan toza almashtiradi.
     """
     text_index = 0
     
@@ -29,21 +29,22 @@ def replace_text_in_slides(prs, new_texts_list):
             if shape.has_text_frame:
                 text_frame = shape.text_frame
                 
-                # Slayd ichidagi barcha paragraflarni aylanib chiqamiz
+                # Har bir paragrafni almashtirish
                 for paragraph in text_frame.paragraphs:
                     if text_index < len(new_texts_list):
                         
-                        # Faqat birinchi Run obyektining matnini almashtiramiz
-                        if paragraph.runs:
-                            # Mavjud barcha matnlarni tozalab, birinchi run'ga yangi matnni yozamiz
-                            paragraph.runs[0].text = new_texts_list[text_index].strip()
-                            # Qo'shimcha run larni o'chiramiz (agar mavjud bo'lsa)
-                            for i in range(len(paragraph.runs) - 1, 0, -1):
-                                paragraph._p.remove(paragraph.runs[i]._r)
-                        else:
-                            # Agar paragraf bo'sh bo'lsa, yangi run qo'shish
+                        new_content = new_texts_list[text_index].strip()
+                        
+                        # 1. Paragrafni XML darajasida tozalash: barcha eski formatlash (runs) o'chiriladi
+                        p = paragraph._p
+                        for run in paragraph.runs:
+                            # Run'ni paragraph XML obyektidan o'chirish
+                            p.remove(run._r) 
+                        
+                        # 2. Yangi run qo'shish va matnni joylash (toza va yangi format bilan)
+                        if new_content:
                             new_run = paragraph.add_run()
-                            new_run.text = new_texts_list[text_index].strip()
+                            new_run.text = new_content
                         
                         text_index += 1
                     
@@ -73,7 +74,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"1. Prezentatsiya **mavzusini** yozing."
     )
     user_states[user_id] = 'awaiting_topic'
-    # Oldingi ma'lumotlarni tozalash
     user_data[user_id] = {} 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -81,7 +81,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     state = user_states.get(user_id)
     
-    # Reklama davrida admin bo'lmaganlarga xabar bermaslik
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
     if user_id != ADMIN_USER_ID and today < target_date:
@@ -100,14 +99,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif state == 'awaiting_pptx' and update.message.document and update.message.document.file_name.endswith('.pptx'):
         await update.message.reply_text("Fayl qabul qilindi. Kontent uchun prompt yaratilmoqda...")
         
-        # Fayl ma'lumotlarini vaqtinchalik xotiraga saqlash
         pptx_file = await update.message.document.get_file()
         file_id = update.message.document.file_id
         
         user_data[user_id]['file_id'] = file_id
         user_data[user_id]['file_name'] = update.message.document.file_name
 
-        # Faylni xotiraga yuklab, slaydlar sonini aniqlash
         file_data = io.BytesIO()
         await pptx_file.download_to_memory(file_data)
         file_data.seek(0)
@@ -120,8 +117,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_states[user_id] = None
             return
 
-        # Prompt yaratish (Foydalanuvchiga beriladigan ko'rsatma)
-        # Slaydlar soni * 2 (Sarlavha va asosiy matn uchun)
+        # Prompt yaratish
         prompt_texts_count = num_slides * 2 
         topic = user_data[user_id]['topic']
         
@@ -145,7 +141,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # 3. Kontentni qabul qilish va faylni to'ldirish
     elif state == 'awaiting_content' and update.message.text:
-        await update.message.reply_text("Kontent qabul qilindi. Matnni PPTXga joylamoqdaman...")
+        await update.message.reply_text("Kontent qabul qilindi. Matnni PPTXga toza joylamoqdaman...")
         
         # AI dan kelgan matnni tozalash
         raw_content = update.message.text
@@ -164,7 +160,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         try:
             prs = Presentation(file_data)
-            # 4. Matnni joylashtirish
+            # 4. Matnni joylashtirish (Yangi, toza funksiya)
             replace_text_in_slides(prs, new_texts)
 
             # 5. Yangi faylni saqlash va yuborish
@@ -174,11 +170,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             await update.message.reply_document(
                 document=output_buffer,
-                filename=f"To'ldirilgan_{file_name}",
-                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}"
+                filename=f"To'ldirilgan_TOZA_{file_name}",
+                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}\n\nEslatma: Matn joylashda faqat mavjud matn qutilari to'ldirildi. Shrift va ranglar shabloningizdagi default holatda qoladi."
             )
         except Exception as e:
-            # Xatolikni admin uchun ko'rsatish
             await update.message.reply_text(f"Faylga matn joylashda kutilmagan xato yuz berdi: {e}")
 
         # Jarayonni tugatish
@@ -188,7 +183,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     else:
         # Noto'g'ri turdagi xabar
-        await update.message.reply_text("Noto'g'ri qadam. Iltimos, /start buyrug'ini qaytadan bosing.")
+        await update.message.reply_text("Noto'g'ri qadam yoki fayl turi mos kelmadi. Iltimos, /start buyrug'ini qaytadan bosing.")
 
 
 def main() -> None:
