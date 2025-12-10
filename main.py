@@ -1,187 +1,180 @@
 import os
 import io
 import datetime
-from telegram import Update, ForceReply
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-from google import genai
 from pptx import Presentation
 
-# --- Konfiguratsiya va API Kalitlari ---
+# --- Konfiguratsiya va Global Sozlamalar ---
 # *Almashtiring: Oʻz Telegram bot tokeningizni joylang*
 BOT_TOKEN = "8579631704:AAHxcJpfN0sFC4C8N8GJHPWpLXsMe3dQ0qQ"
-# *Almashtiring: Oʻz Gemini API kalitingizni joylang*
-GEMINI_API_KEY = "AIzaSyBHRBDjtqHGlbb7XSbYkpXEs0clOkxeTgs"
-
 ADMIN_USER_ID = 8005357331  # *Almashtiring: Sizning Telegram ID raqamingiz*
 
-# Gemini API ni ishga tushirish
-if GEMINI_API_KEY != "AIzaSyBHRBDjtqHGlbb7XSbYkpXEs0clOkxeTgs":
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-else:
-    print("Xato: GEMINI_API_KEY sozlanmagan!")
+# --- Global Holatni Boshqarish ---
+# Foydalanuvchi holatini saqlash: None -> 'awaiting_topic' -> 'awaiting_pptx' -> 'awaiting_content'
+user_states = {} 
+user_data = {}  # Foydalanuvchining mavzusi va fayl ma'lumotlarini saqlash
 
-# --- Global O'zgaruvchilar ---
-user_states = {} # Foydalanuvchi holatini saqlash uchun lug'at
-
-# --- Yordamchi Funksiyalar ---
+# --- PPTX Matnini Almashtirish Funksiyasi ---
 
 def replace_text_in_slides(prs, new_texts_list):
     """
-    Taqdimotdagi (PPTX) matn qutilaridagi matnni yangi matnlar bilan almashtiradi.
-    Bu soddalashtirilgan yechim va har bir shablon uchun mos kelmasligi mumkin.
+    Taqdimotdagi matn qutilaridagi matnni yangi matnlar bilan almashtiradi.
     """
     text_index = 0
-    # Har bir slaydni aylanib chiqish
+    
     for slide in prs.slides:
-        # Har bir slayd ichidagi shakllarni (shapes) tekshirish
         for shape in slide.shapes:
-            # Agar shakl matn qutisiga ega bo'lsa
             if shape.has_text_frame:
                 text_frame = shape.text_frame
-                # Barcha paragraflarni aylanib chiqish (sarlavhalar va matn)
+                # Har bir paragrafdagi matnni almashtirish
                 for paragraph in text_frame.paragraphs:
                     if text_index < len(new_texts_list):
-                        # Matnni to'liq almashtirish
-                        if paragraph.runs:
-                            # Mavjud matnlarni tozalash
-                            while len(paragraph.runs) > 0:
-                                p = paragraph.runs.pop()
+                        # Mavjud matnni tozalash
+                        while paragraph.runs:
+                            paragraph.runs.pop()
 
-                            # Yangi matnni qo'shish
-                            new_run = paragraph.add_run()
-                            new_run.text = new_texts_list[text_index].strip()
-                            text_index += 1
-                        
-                        if text_index >= len(new_texts_list):
-                            return # Matnlar tugadi
-    
-    return # Agar matnlar tugamasa, barcha joylarga qo'yilgan bo'ladi
-
-def generate_presentation_content(topic, num_slides):
-    """
-    Gemini API yordamida berilgan mavzu bo'yicha slaydlar uchun matn yaratadi.
-    """
-    prompt = f"""
-    Siz Oʻzbek tilida ilmiy va rasmiy ohangda prezentatsiya slaydlarini tayyorlovchi mutaxassissiz.
-    '{topic}' mavzusi bo'yicha {num_slides} ta alohida qisqa matnlar yarating.
-    Har bir matn alohida qator yoki ajratuvchi belgi bilan bo'lsin.
-    Matnlar 4-5 jumladan oshmasin va sarlavhalarni o'z ichiga olmasin.
-    """
-    try:
-        response = gemini_model.generate_content(prompt)
-        # Matnni qatorlarga ajratish va bo'sh qatorlarni olib tashlash
-        return [text.strip() for text in response.text.split('\n') if text.strip()]
-    except Exception as e:
-        print(f"Gemini API xatosi: {e}")
-        return None
+                        # Yangi matnni qo'shish
+                        new_run = paragraph.add_run()
+                        new_run.text = new_texts_list[text_index].strip()
+                        text_index += 1
+                    
+                    if text_index >= len(new_texts_list):
+                        return 
 
 # --- Telegram Bot Handlerlari ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start buyrug'ini qabul qiladi."""
-    user = update.effective_user
+    """/start buyrug'ini qabul qiladi va holatni boshlaydi."""
+    user_id = update.effective_user.id
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
 
-    if user.id != ADMIN_USER_ID:
-        # Foydalanuvchilar uchun reklama
+    if user_id != ADMIN_USER_ID:
+        # Boshqa foydalanuvchilar uchun reklama
         if today < target_date:
             await update.message.reply_text(
-                f"Assalomu alaykum, {user.full_name}! 👋\n\n"
-                f"Men hali to'liq ishga tushmadim. Men WPS Office shablonlari asosida ilmiy prezentatsiyalarni AI yordamida avtomatik to'ldirib beruvchi botman!\n\n"
-                f"Rasmiy ishga tushish: **2025 yil 1 yanvar!** Qolib ketmang! 😉"
+                f"Assalomu alaykum! 👋\n\n"
+                f"Men hali to'liq ishga tushmadim, ammo **2025 yil 1 yanvardan** boshlab WPS shablonlaringizni avtomatik to'ldiraman! Kutib qoling! 😉"
             )
-        else:
-            await update.message.reply_text(
-                f"Assalomu alaykum, {user.full_name}! Bot ishga tushdi!\n\n"
-                f"Menga kerakli mavzuni yozing, so'ngra WPS Officedan tanlagan PPTX shabloningizni yuboring. Men uni avtomatik to'ldiraman."
-            )
-    else:
-        # Admin uchun vazifani bajarish
-        await update.message.reply_text(
-            f"Salom, Admin! 😊\n\n"
-            f"Siz botning barcha funksiyalaridan foydalanishingiz mumkin.\n"
-            f"1. Birinchi navbatda, prezentatsiya mavzusini yozing."
-        )
-        user_states[user.id] = 'awaiting_topic'
+            return
+
+    # Admin va 1-yanvardan keyingi foydalanuvchilar
+    await update.message.reply_text(
+        f"Salom! Ishni boshlash uchun:\n\n"
+        f"1. Prezentatsiya **mavzusini** yozing."
+    )
+    user_states[user_id] = 'awaiting_topic'
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Matn yoki fayllarni qabul qiladi."""
-    user = update.effective_user
+    """Matn yoki fayllarni qabul qiladi va jarayonni boshqaradi."""
+    user_id = update.effective_user.id
+    state = user_states.get(user_id)
     
-    # Faqat Adminning xabarlarini qayta ishlash (1-yanvardan keyin /start bosgan foydalanuvchilarniki ham)
+    # Reklama davrida admin bo'lmaganlarga xabar bermaslik (agar vaqt o'tmagan bo'lsa)
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
-    
-    if user.id != ADMIN_USER_ID and today < target_date:
-        # Reklamadan keyin boshqa foydalanuvchilarning matnini e'tiborsiz qoldirish
+    if user_id != ADMIN_USER_ID and today < target_date:
         return
 
-    # 1-yanvardan keyin barcha foydalanuvchilar ishlashi mumkin.
-    
-    state = user_states.get(user.id)
-
+    # 1. Mavzuni qabul qilish
     if state == 'awaiting_topic' and update.message.text:
-        # 1-holat: Mavzuni qabul qilish
-        context.user_data['topic'] = update.message.text
-        user_states[user.id] = 'awaiting_pptx'
+        user_data[user_id] = {'topic': update.message.text}
+        user_states[user_id] = 'awaiting_pptx'
         await update.message.reply_text(
-            f"Mavzu qabul qilindi: **{update.message.text}**.\n\n"
-            f"Endi iltimos, WPS Office/PowerPoint'dan tanlagan **PPTX shabloningizni** (eng kamida 15 slaydli) fayl sifatida yuboring."
+            f"A'lo! Mavzu: **{update.message.text}**.\n\n"
+            f"2. Endi iltimos, WPS/PowerPoint'dan tanlagan **PPTX shabloningizni** fayl sifatida yuboring."
         )
-    
-    elif state == 'awaiting_pptx' and update.message.document and update.message.document.file_name.endswith('.pptx'):
-        # 2-holat: PPTX faylini qabul qilish
-        await update.message.reply_text("Fayl qabul qilindi. Iltimos kuting, AI matnni yaratmoqda va joylamoqda...")
 
+    # 2. PPTX faylini qabul qilish
+    elif state == 'awaiting_pptx' and update.message.document and update.message.document.file_name.endswith('.pptx'):
+        await update.message.reply_text("Fayl qabul qilindi. Kontent uchun prompt yaratilmoqda...")
+        
+        # Fayl ma'lumotlarini vaqtinchalik xotiraga saqlash
         pptx_file = await update.message.document.get_file()
+        file_id = update.message.document.file_id
+        
+        user_data[user_id]['file_id'] = file_id
+        user_data[user_id]['file_name'] = update.message.document.file_name
+
+        # Faylni xotiraga yuklab, slaydlar sonini aniqlash
         file_data = io.BytesIO()
         await pptx_file.download_to_memory(file_data)
         file_data.seek(0)
-
-        # 1. Taqdimot obyektini yuklash
         try:
             prs = Presentation(file_data)
-        except Exception as e:
-            await update.message.reply_text(f"PPTX faylini yuklashda xato yuz berdi: {e}")
-            user_states[user.id] = None
+            num_slides = len(prs.slides)
+        except Exception:
+            await update.message.reply_text("PPTX faylini o'qishda xato. Format to'g'riligini tekshiring.")
+            user_states[user_id] = None
             return
 
-        # 2. Slaydlar sonini aniqlash
-        num_slides = len(prs.slides)
-        topic = context.user_data.get('topic', 'Umumiy prezentatsiya mavzusi')
+        # Prompt yaratish (Foydalanuvchiga beriladigan ko'rsatma)
+        prompt_texts_count = num_slides * 2 # Har bir slayd uchun 2 matn qismi taxminan
+        topic = user_data[user_id]['topic']
         
-        # 3. AI kontentni yaratish
-        new_texts = generate_presentation_content(topic, num_slides * 2) # Har bir slayd uchun 2ta matn joyini taxmin qilib ko'ramiz
-        
-        if not new_texts:
-            await update.message.reply_text("AI kontent yaratishda xato yuz berdi. Iltimos, boshqa mavzu bilan urinib ko'ring.")
-            user_states[user.id] = None
-            return
-
-        # 4. Matnni joylashtirish
-        replace_text_in_slides(prs, new_texts)
-
-        # 5. Yangi faylni saqlash va yuborish
-        output_buffer = io.BytesIO()
-        prs.save(output_buffer)
-        output_buffer.seek(0)
-
-        await update.message.reply_document(
-            document=output_buffer,
-            filename=f"To'ldirilgan_{update.message.document.file_name}",
-            caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}\n**Slaydlar soni:** {num_slides}"
+        prompt = (
+            f"Quyidagi mavzu bo'yicha **{prompt_texts_count} qismdan** iborat prezentatsiya matnini tayyorlang:\n"
+            f"**Mavzu:** {topic}\n\n"
+            f"**Talablar:**\n"
+            f"1. Har bir qism alohida qatorda (yoki raqamlanib) bo'lsin.\n"
+            f"2. Har bir qism 1-4 jumla atrofida bo'lsin (Qisqa va aniq).\n"
+            f"3. Ohang: Ilmiy-rasmiy (o'zbek tilida, professional).\n\n"
+            f"**Natijani to'g'ridan-to'g'ri faqat matn qismlari bilan yuboring, boshqa kirish matnlarini qo'shmang!**"
         )
         
-        user_states[user.id] = None
-        context.user_data.clear()
+        user_states[user_id] = 'awaiting_content'
+        await update.message.reply_text(
+            f"3. **Mavzuga mos kontentni olish uchun**:\n\n"
+            f"Sizga kerak bo'ladigan **Prompt** (ko'rsatma):\n\n"
+            f"```\n{prompt}\n```\n\n"
+            f"Ushbu promptni istalgan AI ga (Gemini, ChatGPT) bering. Olingan toza matnni menga **javob sifatida yuboring** (Reply)."
+        )
+
+    # 3. Kontentni qabul qilish va faylni to'ldirish
+    elif state == 'awaiting_content' and update.message.text:
+        await update.message.reply_text("Kontent qabul qilindi. Matnni PPTXga joylamoqdaman...")
+        
+        # AI dan kelgan matnni tozalash
+        raw_content = update.message.text
+        new_texts = [text.strip() for text in raw_content.split('\n') if text.strip()]
+
+        file_id = user_data[user_id]['file_id']
+        file_name = user_data[user_id]['file_name']
+        topic = user_data[user_id]['topic']
+
+        # Faylni qayta yuklash
+        pptx_file = await context.bot.get_file(file_id)
+        file_data = io.BytesIO()
+        await pptx_file.download_to_memory(file_data)
+        file_data.seek(0)
+        
+        try:
+            prs = Presentation(file_data)
+            # 4. Matnni joylashtirish
+            replace_text_in_slides(prs, new_texts)
+
+            # 5. Yangi faylni saqlash va yuborish
+            output_buffer = io.BytesIO()
+            prs.save(output_buffer)
+            output_buffer.seek(0)
+
+            await update.message.reply_document(
+                document=output_buffer,
+                filename=f"To'ldirilgan_{file_name}",
+                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}"
+            )
+        except Exception as e:
+            await update.message.reply_text(f"Faylga matn joylashda kutilmagan xato yuz berdi: {e}")
+
+        # Jarayonni tugatish
+        user_states[user_id] = None
+        if user_id in user_data:
+            del user_data[user_id]
 
     else:
-        # Boshqa holatlar uchun javob
-        if user.id == ADMIN_USER_ID:
-             await update.message.reply_text("Noto'g'ri qadam. Iltimos, /start buyrug'ini qaytadan bosing yoki PPTX faylini yuboring.")
-        # Boshqa foydalanuvchilar e'tiborsiz qoldiriladi.
+        # Noto'g'ri turdagi xabar
+        await update.message.reply_text("Noto'g'ri qadam. Iltimos, /start buyrug'ini qaytadan bosing.")
 
 
 def main() -> None:
@@ -191,9 +184,8 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, handle_message))
 
-    # Botni ishga tushirish (Webhook yoki Polling)
-    # Railway uchun Webhook sozlamalari odatda Dockerfile orqali boshqariladi, Polling oddiyroq
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
+        
