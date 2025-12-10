@@ -17,77 +17,73 @@ ADMIN_USER_ID = 8005357331
 user_states = {} 
 user_data = {}  
 
-# --- PPTX Matnini Almashtirish Funksiyasi (Professional Heuristika qo'shildi) ---
+# --- PPTX Matnini Almashtirish Funksiyasi (Barqaror va Professional) ---
 
-# Dekortiv shakllarni o'tkazib yuborish uchun minimal o'lcham (EMU - English Metric Units)
-# Taxminan 1.5 sm dan kichik shakllarni o'tkazib yuborish
+# Dekorativ shakllarni o'tkazib yuborish uchun minimal o'lcham (EMU - English Metric Units)
 MIN_WIDTH_EMU = 500000 
 MIN_HEIGHT_EMU = 500000 
 
 def replace_text_in_slides(prs, new_texts_list):
     """
-    Taqdimotdagi faqat asosiy kontent uchun mo'ljallangan matn qutilarini toza almashtiradi.
-    Dekorativ shakllarni o'tkazib yuboradi.
+    Taqdimotdagi matn qutilarini toza almashtiradi, noaniq xatoliklarni kamaytirish uchun tekshiruvlar qo'shilgan.
     """
     text_index = 0
     
     for slide in prs.slides:
         for shape in slide.shapes:
-            if shape.has_text_frame:
-                text_frame = shape.text_frame
+            if not shape.has_text_frame:
+                continue
                 
-                # --- HEURISTIKA FILTRLARI ---
-                
-                # 1. Kichik shakllarni o'tkazib yuborish (Ehtimol, stiker, raqamlar, ikonlar)
-                try:
-                    if shape.width < MIN_WIDTH_EMU or shape.height < MIN_HEIGHT_EMU:
-                        continue 
-                except AttributeError:
-                    # Agar shakl o'lchamiga ega bo'lmasa (masalan, guruh ichidagi matn qutisi) o'tkazib yuboriladi
-                    pass
+            text_frame = shape.text_frame
+            
+            # --- PROFESSIONAL HEURISTIKA FILTRLARI ---
+            
+            # 1. Kichik shakllarni o'tkazib yuborish (stiker, raqamlar, ikonlar)
+            try:
+                if shape.width < MIN_WIDTH_EMU or shape.height < MIN_HEIGHT_EMU:
+                    continue 
+            except AttributeError:
+                pass # Agar o'lchamni aniqlashning iloji bo'lmasa o'tkazib yuborish
 
-                # 2. Ichidagi matnni tekshirish (Dekorativ shablon matnlarini o'tkazib yuborish)
-                if text_frame.has_text:
-                    first_paragraph_text = text_frame.paragraphs[0].text.strip()
-                    
-                    # 2a. Kichik sonli matnlarni o'tkazib yuborish (Masalan, slayd raqamlari "01", "02")
-                    if len(first_paragraph_text) < 4 and first_paragraph_text.isdigit():
-                        continue
-                    
-                    # 2b. Odatdagi shablonli ko'rsatmalarni o'tkazib yuborish
-                    # Sizning PPTX da aniqlangan kirish matnlaridan foydalanildi
-                    if any(phrase.lower() in first_paragraph_text.lower() for phrase in [
-                        'please enter the title', 'title text addition', 'image', '01', '02', '03', '04', 'thank you'
-                    ]):
-                        continue
+            # 2. Ichidagi matnni tekshirish (faqat matn mavjud bo'lsa)
+            # has_text o'rniga paragraphs[0].text ni tekshirish xavfsizroq
+            if text_frame.paragraphs and text_frame.paragraphs[0].text.strip():
+                first_paragraph_text = text_frame.paragraphs[0].text.strip()
                 
-                # --- TOZA MATN JOYLASHTIRISH LOGIKASI ---
+                # Kichik sonli matnlarni (slayd raqamlari "01") yoki shablonli matnlarni o'tkazib yuborish
+                if (len(first_paragraph_text) < 4 and first_paragraph_text.isdigit()) or \
+                   any(phrase.lower() in first_paragraph_text.lower() for phrase in [
+                       'please enter the title', 'title text addition', 'image', '01', '02', '03', '04', 'thank you', 'subtitle'
+                   ]):
+                    continue
+            
+            # --- TOZA MATN JOYLASHTIRISH LOGIKASI ---
 
-                # Har bir paragrafni almashtirish
-                for paragraph in text_frame.paragraphs:
-                    if text_index < len(new_texts_list):
-                        
-                        new_content = new_texts_list[text_index].strip()
-                        
-                        # 1. Paragrafni XML darajasida tozalash: barcha eski formatlash (runs) o'chiriladi
-                        # Bu matnni toza, lekin shablonning asosiy uslubiga mos holda joylashtirishni ta'minlaydi
-                        p = paragraph._p
-                        for run in paragraph.runs:
-                            p.remove(run._r) 
-                        
-                        # 2. Yangi run qo'shish va matnni joylash
-                        if new_content:
-                            new_run = paragraph.add_run()
-                            new_run.text = new_content
-                        
-                        text_index += 1
+            # Har bir paragrafni almashtirish
+            for paragraph in text_frame.paragraphs:
+                if text_index < len(new_texts_list):
                     
-                    if text_index >= len(new_texts_list):
-                        return 
+                    new_content = new_texts_list[text_index].strip()
+                    
+                    # 1. Paragrafni XML darajasida tozalash (barcha eski formatlash/runs o'chiriladi)
+                    p = paragraph._p
+                    for run in paragraph.runs:
+                        p.remove(run._r) 
+                    
+                    # 2. Yangi run qo'shish va matnni joylash
+                    if new_content:
+                        new_run = paragraph.add_run()
+                        new_run.text = new_content
+                    
+                    text_index += 1
+                
+                if text_index >= len(new_texts_list):
+                    return 
 
 # --- Telegram Bot Handlerlari (o'zgarishsiz) ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/start buyrug'ini qabul qiladi."""
     user_id = update.effective_user.id
     today = datetime.date.today()
     target_date = datetime.date(2025, 1, 1)
@@ -108,6 +104,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_data[user_id] = {} 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Matn yoki fayllarni qabul qiladi va jarayonni boshqaradi."""
     user_id = update.effective_user.id
     state = user_states.get(user_id)
     
@@ -187,7 +184,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         try:
             prs = Presentation(file_data)
-            # 4. Matnni joylashtirish (Yangi, toza funksiya)
+            # 4. Matnni joylashtirish (Yangi, barqaror funksiya)
             replace_text_in_slides(prs, new_texts)
 
             # 5. Yangi faylni saqlash va yuborish
@@ -198,7 +195,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_document(
                 document=output_buffer,
                 filename=f"To'ldirilgan_TOZA_{file_name}",
-                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}\n\nEslatma: Matn joylashda faqat asosiy matn qutilari to'ldirildi. Shrift va ranglar shabloningizdagi default tema holatiga qaytgan bo'lishi mumkin."
+                caption=f"Tayyor prezentatsiya:\n\n**Mavzu:** {topic}\n\nEslatma: Matn joylashda faqat asosiy kontent qutilari to'ldirildi. Shrift va ranglar shabloningizdagi default tema holatida saqlanadi."
             )
         except Exception as e:
             await update.message.reply_text(f"Faylga matn joylashda kutilmagan xato yuz berdi: {e}")
